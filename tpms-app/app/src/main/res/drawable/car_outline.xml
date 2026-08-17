@@ -1,0 +1,44 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="240dp"
+    android:viewportWidth="120"
+    android:viewportHeight="240">
+  <!-- Car Body Outline -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#88FFFFFF"
+      android:strokeWidth="6"
+      android:pathData="M25,60 C25,30 45,15 60,15 C75,15 95,30 95,60 L95,180 C95,210 75,225 60,225 C45,225 25,210 25,180 Z" />
+  
+  <!-- Windshield -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#88FFFFFF"
+      android:strokeWidth="6"
+      android:pathData="M35,85 Q60,70 85,85 L75,115 Q60,120 45,115 Z" />
+      
+  <!-- Rear Window -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#88FFFFFF"
+      android:strokeWidth="6"
+      android:pathData="M35,170 Q60,160 85,170 L75,195 Q60,200 45,195 Z" />
+
+  <!-- Wheels -->
+  <!-- FL -->
+  <path
+      android:fillColor="#AAFFFFFF"
+      android:pathData="M15,45 L25,45 L25,75 L15,75 Z" />
+  <!-- FR -->
+  <path
+      android:fillColor="#AAFFFFFF"
+      android:pathData="M95,45 L105,45 L105,75 L95,75 Z" />
+  <!-- RL -->
+  <path
+      android:fillColor="#AAFFFFFF"
+      android:pathData="M15,165 L25,165 L25,195 L15,195 Z" />
+  <!-- RR -->
+  <path
+      android:fillColor="#AAFFFFFF"
+      android:pathData="M95,165 L105,165 L105,195 L95,195 Z" />
+</vector>
