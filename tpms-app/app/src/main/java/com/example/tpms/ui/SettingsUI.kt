@@ -167,7 +167,7 @@ fun SettingsUI(onBack: () -> Unit) {
                         title = if (useFahrenheit) "High Temperature (°F)" else "High Temperature (°C)",
                         value = highTemp.toFloat(), useBar = false, isPressure = false,
                         minVal = 0f, maxVal = 80f, step = 1f,
-                        onValueChange = { TpmsManager.setHighTempC(it.toInt()) }
+                        onValueChange = { TpmsManager.setHighTempC(Math.round(it)) }
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
@@ -256,8 +256,10 @@ fun SettingStepper(
                 val tempF = value * 9f / 5f + 32f
                 val roundedF = Math.round(tempF)
                 val nextF = if (isIncrement) roundedF + 1 else roundedF - 1
-                val nextC = (nextF - 32) * 5f / 9f
-                nextVal = nextC.coerceIn(minVal - 2f, maxVal + 2f)
+                var nextC = Math.round((nextF - 32f) * 5f / 9f)
+                if (isIncrement && nextC <= value.toInt()) nextC = value.toInt() + 1
+                if (!isIncrement && nextC >= value.toInt()) nextC = value.toInt() - 1
+                nextVal = nextC.toFloat().coerceIn(minVal, maxVal)
             } else {
                 val roundedC = Math.round(value)
                 val nextC = if (isIncrement) roundedC + 1 else roundedC - 1

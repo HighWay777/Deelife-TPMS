@@ -86,24 +86,33 @@ object TpmsManager {
     private val _alarmSnoozedEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val alarmSnoozedEvent = _alarmSnoozedEvent.asSharedFlow()
 
-    // Pressure history for trend arrows: sensor name → list of last 5 pressures (newest last)
-    private val _pressureHistory = MutableStateFlow<Map<String, List<Double>>>(emptyMap())
+    // Pressure history for trend arrows: sensor name → list of (timestamp, pressure) over last 10 minutes
+    data class PressurePoint(val timestamp: Long, val pressurePsi: Double)
+    private val _pressureHistory = MutableStateFlow<Map<String, List<PressurePoint>>>(emptyMap())
     val pressureHistory = _pressureHistory.asStateFlow()
 
     fun recordPressure(sensorName: String, pressurePsi: Double) {
+        val now = System.currentTimeMillis()
         val current = _pressureHistory.value.toMutableMap()
-        val history = (current[sensorName] ?: emptyList()).toMutableList()
-        history.add(pressurePsi)
-        if (history.size > 5) history.removeAt(0)
-        current[sensorName] = history
-        _pressureHistory.value = current
+        val history = (current[sensorName] ?: emptyList()).filter { now - it.timestamp < 600_000L }.toMutableList()
+        val lastPoint = history.lastOrNull()
+        // Record at most once every 20 seconds, or on significant pressure change (>= 0.3 PSI)
+        if (lastPoint == null || (now - lastPoint.timestamp >= 20_000L) || Math.abs(pressurePsi - lastPoint.pressurePsi) >= 0.3) {
+            history.add(PressurePoint(now, pressurePsi))
+            current[sensorName] = history
+            _pressureHistory.value = current
+        }
     }
 
     fun getTrend(sensorName: String): Int {
         val history = _pressureHistory.value[sensorName] ?: return 0
-        if (history.size < 3) return 0
-        val recent = history.last()
-        val older = history.first()
+        if (history.size < 2) return 0
+        val recent = history.last().pressurePsi
+        // Compare with reading from 2-5 minutes ago, or oldest in history if at least 1 minute old
+        val now = System.currentTimeMillis()
+        val olderPoint = history.firstOrNull { now - it.timestamp >= 60_000L } ?: history.first()
+        if (now - olderPoint.timestamp < 30_000L) return 0 // not enough time elapsed
+        val older = olderPoint.pressurePsi
         return when {
             recent > older + 0.3 -> 1   // rising ▲
             recent < older - 0.3 -> -1  // falling ▼
@@ -238,10 +247,21 @@ object TpmsManager {
     }
 
     fun snoozeTireAlarms(name: String, durationMs: Long) {
-        val keys = listOf("$name:Low", "$name:High", "$name:Temp", "$name:Batt", "$name:FastLeak", "$name:SlowLeak", "$name:Offline")
+        // FastLeak is safety-critical and intentionally omitted so sudden punctures are never silenced
+        val keys = listOf("$name:Low", "$name:High", "$name:Temp", "$name:Batt", "$name:SlowLeak", "$name:Offline")
         val snoozeUntil = if (durationMs == Long.MAX_VALUE) Long.MAX_VALUE else System.currentTimeMillis() + durationMs
         keys.forEach { key ->
             snoozedAlarms[key] = snoozeUntil
+        }
+        scope.launch {
+            _alarmSnoozedEvent.emit(Unit)
+        }
+    }
+
+    fun unSnoozeTireAlarms(name: String) {
+        val keys = listOf("$name:Low", "$name:High", "$name:Temp", "$name:Batt", "$name:SlowLeak", "$name:Offline")
+        keys.forEach { key ->
+            snoozedAlarms.remove(key)
         }
         scope.launch {
             _alarmSnoozedEvent.emit(Unit)
@@ -331,7 +351,7 @@ object TpmsManager {
                 _pairingState.value = PairingState.Pairing(positionCode, i, step)
                 delay(1000)
             }
-            _pairingState.value = PairingState.Idle
+            stopPairing() // Send stop pairing command to dongle so hardware exits pairing mode
         }
     }
 

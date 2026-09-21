@@ -70,8 +70,8 @@ class TpmsService : Service() {
     // Data class for tracking history
     private data class TireHistory(val time: Long, val pressure: Float, val temp: Int)
 
-    // Tracks pressure/temp history for slow leak detection
-    private val pressureHistory = mutableMapOf<String, MutableList<TireHistory>>()
+    // Tracks pressure/temp history for slow leak detection (thread-safe)
+    private val pressureHistory = java.util.concurrent.ConcurrentHashMap<String, MutableList<TireHistory>>()
 
     // -----------------------------------------------------------------------
     // USB permission receiver (lives inside the service — works without UI)
@@ -231,7 +231,8 @@ class TpmsService : Service() {
                 PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             else
                 PendingIntent.FLAG_UPDATE_CURRENT
-            val pi = PendingIntent.getBroadcast(this, 2, Intent(ACTION_USB_PERMISSION), flags)
+            val intent = Intent(ACTION_USB_PERMISSION).setPackage(packageName)
+            val pi = PendingIntent.getBroadcast(this, 2, intent, flags)
             manager.requestPermission(device, pi)
             return
         }
@@ -321,7 +322,30 @@ class TpmsService : Service() {
         }
     }
 
+    private fun alarmSeverity(key: String): Int = when {
+        key.endsWith(":FastLeak") -> 100
+        key.endsWith(":Low")      -> 80
+        key.endsWith(":High")     -> 70
+        key.endsWith(":Temp")     -> 60
+        key.endsWith(":SlowLeak") -> 50
+        key.endsWith(":Batt")     -> 30
+        key.endsWith(":Offline")  -> 20
+        else                      -> 0
+    }
+
     private fun evaluateAlarms(state: TpmsState) {
+        if (!isConnected) {
+            // When USB is disconnected, clear active alarm state and do not sound false offline alarms
+            mainHandler.post {
+                if (isAlarmActive) {
+                    stopAlarmSound()
+                    lastActiveAlarmKey = null
+                    updateNotification(null, null)
+                }
+            }
+            return
+        }
+
         val tires = listOf(
             "Front Left"  to state.frontLeft,
             "Front Right" to state.frontRight,
@@ -329,14 +353,16 @@ class TpmsService : Service() {
             "Rear Right"  to state.rearRight
         )
 
-        val lowPsi   = TpmsManager.lowPressurePsi.value
-        val highPsi  = TpmsManager.highPressurePsi.value
-        val highTmp  = TpmsManager.highTempC.value
-        val useBar   = TpmsManager.useBar.value
-        val now      = System.currentTimeMillis()
+        val lowPsi        = TpmsManager.lowPressurePsi.value
+        val highPsi       = TpmsManager.highPressurePsi.value
+        val highTmp       = TpmsManager.highTempC.value
+        val useBar        = TpmsManager.useBar.value
+        val useFahrenheit = TpmsManager.useFahrenheit.value
+        val now           = System.currentTimeMillis()
 
         var globalActiveAlarmMsg: String? = null
         var globalActiveAlarmKey: String? = null
+        var highestSeverity = -1
 
         val pState = TpmsManager.pairingState.value
         val pairingPositionCode = if (pState is PairingState.Pairing) pState.positionCode else null
@@ -360,69 +386,73 @@ class TpmsService : Service() {
                 continue // Do not check alarms for this tire while it is pairing!
             }
 
-            // Slow-leak history
+            // Thread-safe slow-leak history
             val history = pressureHistory.getOrPut(name) { mutableListOf() }
-            history.add(TireHistory(now, tire.pressurePsi.toFloat(), tire.temperatureC))
-            history.removeAll { it.time < now - 900_000 }
+            synchronized(history) {
+                history.add(TireHistory(now, tire.pressurePsi.toFloat(), tire.temperatureC))
+                history.removeAll { it.time < now - 900_000 }
+            }
 
             var tireAlarmKey: String? = null
             var tireAlarmMsg: String? = null
 
-            // 2. Offline / Signal Lost Alarm — checked first because a stale reading makes every
-            // other check below meaningless (we'd be alarming on a pressure value that's minutes old).
-            val ageMs = now - tire.lastUpdatedMs
-            if (ageMs > OFFLINE_ALARM_MS) {
-                tireAlarmKey = "$name:Offline"
-                tireAlarmMsg = "$name Sensor Offline — no signal for ${ageMs / 1000}s"
+            // Prioritized per-tire evaluations:
+            // 1. Fast Leak / Hardware Error Alarm (0x08 bitmask) - highest safety priority
+            if ((tire.status and 0x08) != 0) {
+                tireAlarmKey = "$name:FastLeak"
+                tireAlarmMsg = "$name Fast Leak / Error!"
             }
-            // 3. Low Pressure Alarm
+            // 2. Low Pressure Alarm
             else if (tire.pressurePsi < lowPsi) {
                 tireAlarmKey = "$name:Low"
                 tireAlarmMsg = if (useBar) "$name Low: ${"%.2f".format(tire.pressurePsi / 14.5038f)} Bar"
                                else        "$name Low: ${"%.1f".format(tire.pressurePsi)} PSI"
             }
-            // 4. High Pressure Alarm
+            // 3. High Pressure Alarm
             else if (tire.pressurePsi > highPsi) {
                 tireAlarmKey = "$name:High"
                 tireAlarmMsg = if (useBar) "$name High: ${"%.2f".format(tire.pressurePsi / 14.5038f)} Bar"
                                else        "$name High: ${"%.1f".format(tire.pressurePsi)} PSI"
             }
-            // 5. High Temperature Alarm
+            // 4. High Temperature Alarm (respects useFahrenheit)
             else if (tire.temperatureC > highTmp) {
                 tireAlarmKey = "$name:Temp"
-                tireAlarmMsg = "$name Temp High: ${tire.temperatureC}°C"
+                tireAlarmMsg = if (useFahrenheit) "$name Temp High: ${Math.round(tire.temperatureC * 9f / 5f + 32f)}°F"
+                               else               "$name Temp High: ${tire.temperatureC}°C"
             }
-            // 6. Low Battery Alarm
-            else if (tire.isLowBattery) {
-                tireAlarmKey = "$name:Batt"
-                tireAlarmMsg = "$name Sensor Battery Low"
-            }
-            // 7. Fast Leak / Hardware Error Alarm (0x08) - ONLY if pressure actually dropped
-            else if ((tire.status and 0x08) != 0) {
-                val hasPressureDrop = history.isNotEmpty() && (history.first().pressure - tire.pressurePsi > 1.0f)
-                if (hasPressureDrop || tire.pressurePsi < lowPsi) {
-                    tireAlarmKey = "$name:FastLeak"
-                    tireAlarmMsg = "$name Fast Leak / Error!"
-                }
-            }
-            // 8. Slow Leak Alarm
+            // 5. Slow Leak Alarm
             else {
-                val hasSlowLeak = history.size >= 2 && run {
-                    val oldData = history.first()
-                    val timeDelta = now - oldData.time
-                    if (timeDelta < 300_000) return@run false
-                    val rawPressureDrop = oldData.pressure - tire.pressurePsi
-                    if (rawPressureDrop <= 2.0f) return@run false
-                    val tempDrop = oldData.temp - tire.temperatureC
-                    if (tempDrop > 5) return@run false
-                    val expectedPressureDrop = tempDrop * 0.16f
-                    val adjustedOldPressure = oldData.pressure - expectedPressureDrop
-                    (adjustedOldPressure - tire.pressurePsi) > 2.0f
+                val hasSlowLeak = synchronized(history) {
+                    history.size >= 2 && run {
+                        val oldData = history.first()
+                        val timeDelta = now - oldData.time
+                        if (timeDelta < 300_000) return@run false
+                        val rawPressureDrop = oldData.pressure - tire.pressurePsi
+                        if (rawPressureDrop <= 2.0f) return@run false
+                        val tempDrop = oldData.temp - tire.temperatureC
+                        if (tempDrop > 5) return@run false
+                        val expectedPressureDrop = tempDrop * 0.16f
+                        val adjustedOldPressure = oldData.pressure - expectedPressureDrop
+                        (adjustedOldPressure - tire.pressurePsi) > 2.0f
+                    }
                 }
                 if (hasSlowLeak) {
                     tireAlarmKey = "$name:SlowLeak"
                     tireAlarmMsg = if (useBar) "$name Slow Leak! ${"%.2f".format(tire.pressurePsi / 14.5038f)} Bar"
                                    else        "$name Slow Leak! ${"%.1f".format(tire.pressurePsi)} PSI"
+                }
+                // 6. Low Battery Alarm
+                else if (tire.isLowBattery) {
+                    tireAlarmKey = "$name:Batt"
+                    tireAlarmMsg = "$name Sensor Battery Low"
+                }
+                // 7. Offline / Signal Lost Alarm (only when USB is connected and this specific sensor dropped)
+                else {
+                    val ageMs = now - tire.lastUpdatedMs
+                    if (ageMs > OFFLINE_ALARM_MS) {
+                        tireAlarmKey = "$name:Offline"
+                        tireAlarmMsg = "$name Sensor Offline — no signal for ${ageMs / 1000}s"
+                    }
                 }
             }
 
@@ -430,9 +460,13 @@ class TpmsService : Service() {
 
             if (tireAlarmKey != null) {
                 val snoozeTime = TpmsManager.snoozedAlarms[tireAlarmKey] ?: 0L
-                if (now >= snoozeTime && globalActiveAlarmKey == null) {
-                    globalActiveAlarmKey = tireAlarmKey
-                    globalActiveAlarmMsg = tireAlarmMsg
+                if (now >= snoozeTime) {
+                    val severity = alarmSeverity(tireAlarmKey)
+                    if (severity > highestSeverity) {
+                        highestSeverity = severity
+                        globalActiveAlarmKey = tireAlarmKey
+                        globalActiveAlarmMsg = tireAlarmMsg
+                    }
                 }
             }
         }
@@ -463,6 +497,13 @@ class TpmsService : Service() {
 
     private fun startTestSoundLoop() {
         testSoundJob?.cancel()
+        // Save current volume before test boost
+        if (savedAlarmVolume < 0) {
+            try {
+                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                savedAlarmVolume = am.getStreamVolume(android.media.AudioManager.STREAM_ALARM)
+            } catch (_: Exception) {}
+        }
         testSoundJob = serviceScope.launch {
             while (isActive) {
                 val isPlaying = synchronized(this@TpmsService) {
@@ -480,6 +521,14 @@ class TpmsService : Service() {
         testSoundJob?.cancel()
         testSoundJob = null
         stopCurrentSound()
+        // Restore original volume after test
+        if (savedAlarmVolume >= 0) {
+            try {
+                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, savedAlarmVolume, 0)
+            } catch (_: Exception) {}
+            savedAlarmVolume = -1
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -524,8 +573,23 @@ class TpmsService : Service() {
     }
 
     private var activeMediaPlayer: MediaPlayer? = null
-
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
+
+    @Synchronized
+    private fun abandonAudioFocus() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus { }
+            }
+        } catch (e: Exception) {
+            Log.e("TpmsService", "Error abandoning audio focus: ${e.message}")
+        }
+    }
 
     @Synchronized
     private fun playAlarmSound(boostVolume: Boolean = false) {
@@ -564,15 +628,8 @@ class TpmsService : Service() {
             val mp = MediaPlayer()
             activeMediaPlayer = mp
             val uriStr = TpmsManager.alarmSoundUri.value
-            val uri = if (uriStr != null) {
-                Uri.parse(uriStr)
-            } else {
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            }
-
-            if (uri != null) {
-                mp.setDataSource(this, uri)
+            if (uriStr != null) {
+                mp.setDataSource(this, Uri.parse(uriStr))
             } else {
                 val afd = resources.openRawResourceFd(R.raw.alarm_ping)
                 mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
@@ -592,10 +649,11 @@ class TpmsService : Service() {
                         activeMediaPlayer = null
                     }
                 }
+                abandonAudioFocus() // Restore ducked car music volume immediately
             }
             mp.prepare()
             mp.start()
-            Log.d("TpmsService", "🔔 Alarm sound played: $uri")
+            Log.d("TpmsService", "🔔 Alarm sound played (custom: ${uriStr != null})")
         } catch (e: Exception) {
             Log.e("TpmsService", "Sound playback failed: ${e.message}", e)
             try {
@@ -617,6 +675,7 @@ class TpmsService : Service() {
                             activeMediaPlayer = null
                         }
                     }
+                    abandonAudioFocus()
                 }
                 mp.prepare()
                 mp.start()
@@ -629,16 +688,8 @@ class TpmsService : Service() {
 
     @Synchronized
     private fun stopCurrentSound() {
+        abandonAudioFocus()
         try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
-                audioFocusRequest = null
-            } else {
-                @Suppress("DEPRECATION")
-                am.abandonAudioFocus { }
-            }
-
             activeMediaPlayer?.let {
                 if (it.isPlaying) {
                     it.stop()
@@ -656,20 +707,31 @@ class TpmsService : Service() {
     // -----------------------------------------------------------------------
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            
+            // Standard persistent notification channel (silent/minimized)
             val ch = NotificationChannel(
                 "TPMS_CHANNEL", "TPMS Monitoring", NotificationManager.IMPORTANCE_LOW
             ).apply { description = "Monitors USB TPMS sensors in the background" }
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(ch)
+            nm.createNotificationChannel(ch)
+
+            // Dedicated alert channel with high importance so heads-up banners & fullScreenIntent work
+            val alertCh = NotificationChannel(
+                "TPMS_ALERT_CHANNEL", "TPMS Alerts", NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Critical TPMS tire pressure and temperature alarms"
+                enableVibration(true)
+            }
+            nm.createNotificationChannel(alertCh)
         }
     }
 
     private fun createNotification(alertMsg: String? = null, alertKey: String? = null): Notification {
-        val builder = NotificationCompat.Builder(this, "TPMS_CHANNEL")
+        val isAlert = alertMsg != null && alertKey != null
+        val channelId = if (isAlert) "TPMS_ALERT_CHANNEL" else "TPMS_CHANNEL"
+        val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOnlyAlertOnce(true)
-
-        val isAlert = alertMsg != null && alertKey != null
 
         val appFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -691,8 +753,7 @@ class TpmsService : Service() {
                 .setColor(Color.RED)
 
             // Wake the screen and bring the app to front even when the phone is locked
-            // or fully backgrounded. This replaces a bare startActivity() call from the
-            // service, which Android 10+ silently blocks in exactly that situation.
+            // or fully backgrounded.
             val canFullScreen = if (Build.VERSION.SDK_INT >= 34) {
                 (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
             } else true

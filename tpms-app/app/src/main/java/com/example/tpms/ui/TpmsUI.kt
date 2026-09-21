@@ -129,10 +129,22 @@ fun SnoozeBottomSheet(tireName: String, onDismiss: () -> Unit) {
             Text("⏱ Snooze — $tireName", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
             Text("Select snooze duration.", color = Color(0xFF9999BB), fontSize = 13.sp)
             Spacer(modifier = Modifier.height(4.dp))
+            val keys = listOf("$tireName:Low", "$tireName:High", "$tireName:Temp", "$tireName:Batt", "$tireName:SlowLeak", "$tireName:Offline")
+            val isCurrentlySnoozed = keys.any { (TpmsManager.snoozedAlarms[it] ?: 0L) > System.currentTimeMillis() }
+
+            if (isCurrentlySnoozed) {
+                Button(onClick = { TpmsManager.unSnoozeTireAlarms(tireName); onDismiss() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)), shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentGreen),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                    Text("🔔 Un-snooze / Resume Alerts", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
             listOf(
                 Triple("Snooze 10 Min ⏱", 10 * 60_000L, AccentGreen.copy(alpha = 0.18f)),
                 Triple("Snooze 30 Min ⏱", 30 * 60_000L, Accent.copy(alpha = 0.18f)),
-                Triple("Snooze Until 🔄", Long.MAX_VALUE, Color(0xFFFF8C00).copy(alpha = 0.18f))
+                Triple("Snooze Until Restart 🔄", Long.MAX_VALUE, Color(0xFFFF8C00).copy(alpha = 0.18f))
             ).forEach { (label, duration, bg) ->
                 Button(onClick = { TpmsManager.snoozeTireAlarms(tireName, duration); onDismiss() },
                     colors = ButtonDefaults.buttonColors(containerColor = bg), shape = RoundedCornerShape(12.dp),
@@ -142,7 +154,7 @@ fun SnoozeBottomSheet(tireName: String, onDismiss: () -> Unit) {
                 }
             }
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Cancel", color = Color(0xFFFF5555), fontSize = 14.sp)
+                Text("Close", color = Color(0xFF9999AA), fontSize = 14.sp)
             }
         }
     }
