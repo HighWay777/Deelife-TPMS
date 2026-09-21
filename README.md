@@ -4,6 +4,12 @@ A modern, reliable, and lightweight native Android application and background mo
 
 Designed specifically to replace the unstable, crash-prone "StoreBao" application on Android automotive head units (Android 10+) and mobile devices.
 
+[![Latest Release](https://img.shields.io/badge/Release-v1.11-blue.svg)](https://git.vhelectronics.com/vhadmin/Deelife-TPMS/releases/tag/v1.11)
+[![Download APK](https://img.shields.io/badge/Download-Deelife--TPMS--v1.11.apk-success.svg)](https://git.vhelectronics.com/vhadmin/Deelife-TPMS/releases/download/v1.11/Deelife-TPMS-v1.11.apk)
+[![Bug Report](https://img.shields.io/badge/Report%20Bug-report.vhelectronics.com-orange.svg)](https://report.vhelectronics.com/)
+
+📥 **Direct APK Download:** [Deelife-TPMS-v1.11.apk (v1.11)](https://git.vhelectronics.com/vhadmin/Deelife-TPMS/releases/download/v1.11/Deelife-TPMS-v1.11.apk) or via repository file [release/Deelife-TPMS-v1.11.apk](release/Deelife-TPMS-v1.11.apk).
+
 ---
 
 ## 🚀 Key Features
