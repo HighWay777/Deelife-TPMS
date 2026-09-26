@@ -60,7 +60,7 @@ echo "==> Building"
 (
     cd "$APP"
     if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
-        cmd //c "gradlew.bat --no-daemon -q testDebugUnitTest assembleRelease"
+        cmd //c "$(cygpath -w "$APP/gradlew.bat") --no-daemon -q testDebugUnitTest assembleRelease"
     else
         ./gradlew --no-daemon -q testDebugUnitTest assembleRelease
     fi
