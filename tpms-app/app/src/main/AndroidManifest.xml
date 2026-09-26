@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 14+: a connectedDevice foreground service must hold one of a set of
+         permissions before USB access is granted (e.g. right after boot). -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- In-app updates from the Gitea releases page -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
@@ -41,8 +48,14 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- Restart monitoring after the app updated itself -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

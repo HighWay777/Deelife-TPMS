@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class PairingStep {
@@ -326,9 +327,9 @@ object TpmsManager {
 
     // Commands
     fun updatePairingStep(positionCode: Int, nextStep: PairingStep) {
-        val current = _pairingState.value
-        if (current is PairingState.Pairing && current.positionCode == positionCode) {
-            _pairingState.value = PairingState.Pairing(positionCode, current.timeRemainingSec, nextStep)
+        _pairingState.update { current ->
+            if (current is PairingState.Pairing && current.positionCode == positionCode) current.copy(step = nextStep)
+            else current
         }
     }
 
@@ -346,9 +347,11 @@ object TpmsManager {
         pairingJob?.cancel()
         pairingJob = scope.launch {
             for (i in 120 downTo 0) {
-                val current = _pairingState.value
-                val step = if (current is PairingState.Pairing) current.step else PairingStep.WAITING_FOR_DROP
-                _pairingState.value = PairingState.Pairing(positionCode, i, step)
+                // Atomic update: the parser may advance the step concurrently from the USB thread.
+                _pairingState.update { current ->
+                    val step = if (current is PairingState.Pairing) current.step else PairingStep.WAITING_FOR_DROP
+                    PairingState.Pairing(positionCode, i, step)
+                }
                 delay(1000)
             }
             stopPairing() // Send stop pairing command to dongle so hardware exits pairing mode

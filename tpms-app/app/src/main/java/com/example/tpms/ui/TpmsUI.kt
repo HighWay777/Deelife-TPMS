@@ -191,8 +191,9 @@ fun TireCard(
     onClick: (isAlert: Boolean) -> Unit, modifier: Modifier = Modifier
 ) {
     val isAlert = alarmKey != null
-    val keys = listOf("$title:Low","$title:High","$title:Temp","$title:Batt","$title:FastLeak","$title:SlowLeak","$title:Offline")
-    val maxSnoozeUntil = keys.map { TpmsManager.snoozedAlarms[it] ?: 0L }.maxOrNull() ?: 0L
+    // Only the alarm that is actually active counts: a Fast Leak (never snoozable) must not
+    // look "snoozed" just because the tyre's other warnings were silenced.
+    val maxSnoozeUntil = alarmKey?.let { TpmsManager.snoozedAlarms[it] } ?: 0L
     val isSnoozed = isAlert && maxSnoozeUntil > currentTime
     val minutesLeft = if (maxSnoozeUntil == Long.MAX_VALUE) -1
                       else ((maxSnoozeUntil - currentTime + 59999L) / 60000L).toInt().coerceAtLeast(0)

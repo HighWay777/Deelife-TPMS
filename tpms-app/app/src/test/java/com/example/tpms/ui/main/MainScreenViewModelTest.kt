@@ -82,7 +82,7 @@ class TpmsParserTest {
     fun skipsGarbageBeforeFrame() = runTest {
         val parser = TpmsParser()
         val data = byteArrayOf(
-            0x00, 0xFF, 0x00, // garbage
+            0x00, 0xFF.toByte(), 0x00, // garbage
             0x55.toByte(), 0xAA.toByte(), 0x08.toByte(), 0x01.toByte(),
             0x47.toByte(), 0x47.toByte(), 0x00.toByte(), 0xF6.toByte()
         )

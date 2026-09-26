@@ -189,16 +189,21 @@ class TpmsService : Service() {
     // -----------------------------------------------------------------------
     // Connection retry loop — critical for background / boot startup
     // After boot the USB permission dialog may need a moment to be shown and
-    // accepted. We retry every 5 s for up to 3 minutes.
+    // accepted. We retry every 5 s for the first 3 minutes (asking for permission),
+    // then keep retrying every 15 s for as long as the service runs — but only
+    // silently, so a transient read error never leaves monitoring dead.
     // -----------------------------------------------------------------------
     private fun startConnectionRetryLoop() {
         serviceScope.launch {
-            repeat(36) {   // 36 × 5 s = 3 minutes
-                delay(5_000)
+            var attempt = 0
+            while (isActive) {
+                val boostPhase = attempt < 36   // 36 × 5 s = 3 minutes
+                delay(if (boostPhase) 5_000 else 15_000)
                 if (!isConnected) {
-                    Log.d("TpmsService", "Retry connect attempt $it")
-                    connectUsb()
+                    Log.d("TpmsService", "Retry connect attempt $attempt")
+                    connectUsb(requestPermission = boostPhase)
                 }
+                attempt++
             }
         }
     }
@@ -207,7 +212,7 @@ class TpmsService : Service() {
     // USB helpers
     // -----------------------------------------------------------------------
     @Synchronized
-    private fun connectUsb() {
+    private fun connectUsb(requestPermission: Boolean = true) {
         if (isConnected) return
 
         val manager = getSystemService(Context.USB_SERVICE) as UsbManager
@@ -226,6 +231,7 @@ class TpmsService : Service() {
 
         // *** KEY FIX: if we don't have permission, REQUEST it from the service ***
         if (!manager.hasPermission(device)) {
+            if (!requestPermission) return
             Log.d("TpmsService", "No USB permission — requesting from service...")
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                 PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -333,7 +339,14 @@ class TpmsService : Service() {
         else                      -> 0
     }
 
-    private fun evaluateAlarms(state: TpmsState) {
+    private val evaluateLock = Any()
+
+    // Called concurrently from the state collector, the offline timer and snooze events.
+    private fun evaluateAlarms(state: TpmsState) = synchronized(evaluateLock) {
+        evaluateAlarmsLocked(state)
+    }
+
+    private fun evaluateAlarmsLocked(state: TpmsState) {
         if (!isConnected) {
             // When USB is disconnected, clear active alarm state and do not sound false offline alarms
             mainHandler.post {
@@ -656,6 +669,8 @@ class TpmsService : Service() {
             Log.d("TpmsService", "🔔 Alarm sound played (custom: ${uriStr != null})")
         } catch (e: Exception) {
             Log.e("TpmsService", "Sound playback failed: ${e.message}", e)
+            try { activeMediaPlayer?.release() } catch (_: Exception) {}
+            activeMediaPlayer = null
             try {
                 val mp = MediaPlayer()
                 activeMediaPlayer = mp

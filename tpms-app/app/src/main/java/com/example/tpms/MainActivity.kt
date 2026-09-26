@@ -17,7 +17,10 @@ import androidx.compose.runtime.*
 import com.example.tpms.ui.PairingUI
 import com.example.tpms.ui.SettingsUI
 import com.example.tpms.ui.TpmsDashboard
+import com.example.tpms.ui.UpdateDialogHost
+import com.example.tpms.update.UpdateManager
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -36,7 +39,7 @@ class MainActivity : ComponentActivity() {
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         device?.let {
                             Log.d("MainActivity", "Permission granted for device $it")
-                            sendBroadcast(Intent("com.example.tpms.ACTION_CONNECT_USB"))
+                            sendBroadcast(Intent("com.example.tpms.ACTION_CONNECT_USB").setPackage(packageName))
                         }
                     } else {
                         Log.d("MainActivity", "Permission denied for device $device")
@@ -51,6 +54,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         currentIntent.value = intent
         TpmsManager.init(this)
+        UpdateManager.init(this)
 
         // Register USB permission receiver
         val filter = IntentFilter(ACTION_USB_PERMISSION)
@@ -102,12 +106,23 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+
+            UpdateDialogHost()
+            // Head units often stay on this screen for hours and get online late;
+            // the check itself is throttled inside UpdateManager.
+            LaunchedEffect(Unit) {
+                while (true) {
+                    delay(5 * 60_000L)
+                    UpdateManager.maybeAutoCheck(this@MainActivity)
+                }
+            }
         }
     }
 
     override fun onResume() {
         super.onResume()
         checkUsbPermission()
+        UpdateManager.onResume(this)
     }
 
     override fun onDestroy() {
@@ -145,12 +160,13 @@ class MainActivity : ComponentActivity() {
             } else {
                 PendingIntent.FLAG_UPDATE_CURRENT
             }
+            // Explicit package: Android 14+ rejects mutable PendingIntents wrapping implicit intents.
             val permissionIntent = PendingIntent.getBroadcast(
-                this, 0, Intent(ACTION_USB_PERMISSION), flags
+                this, 0, Intent(ACTION_USB_PERMISSION).setPackage(packageName), flags
             )
             manager.requestPermission(device, permissionIntent)
         } else {
-            sendBroadcast(Intent("com.example.tpms.ACTION_CONNECT_USB"))
+            sendBroadcast(Intent("com.example.tpms.ACTION_CONNECT_USB").setPackage(packageName))
         }
     }
 }

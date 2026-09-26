@@ -71,6 +71,7 @@ fun SettingsUI(onBack: () -> Unit) {
     var soundExpanded by remember { mutableStateOf(true) }
     var calibrationExpanded by remember { mutableStateOf(true) }
     var thresholdsExpanded by remember { mutableStateOf(true) }
+    var updatesExpanded by remember { mutableStateOf(true) }
 
     Box(modifier = Modifier.fillMaxSize().background(Surface0).padding(16.dp)) {
         Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -141,6 +142,10 @@ fun SettingsUI(onBack: () -> Unit) {
                             CalibrationItem("RR", 17, useBar)
                         }
                     }
+                }
+                SettingsSectionHeader("🔄  App Updates", updatesExpanded) { updatesExpanded = !updatesExpanded }
+                if (updatesExpanded) {
+                    UpdateSettingsCard()
                 }
             }
             Column(

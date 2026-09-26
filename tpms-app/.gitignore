@@ -14,3 +14,10 @@
 .cxx
 local.properties
 .kotlin
+
+# Release signing (never commit)
+keystore.properties
+*.jks
+*.keystore
+# Local JDK copy
+/jdk

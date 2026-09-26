@@ -1,8 +1,15 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.android)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+}
+
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -12,8 +19,14 @@ android {
         applicationId = "com.example.tpms"
         minSdk = 21
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.11"
+        versionCode = 12
+        versionName = "1.12"
+
+        // In-app updater: latest published release of the public Gitea repository.
+        buildConfigField(
+            "String", "UPDATE_API_URL",
+            "\"https://git.vhelectronics.com/api/v1/repos/vhadmin/Deelife-TPMS/releases/latest\""
+        )
     }
 
     signingConfigs {
@@ -25,6 +38,21 @@ android {
             enableV2Signing = true
             enableV3Signing = true
         }
+        // Release key lives outside the repo. keystore.properties (git-ignored) must define
+        // storeFile, storePassword, keyAlias and keyPassword. Without it, assembleRelease
+        // produces an unsigned APK instead of silently falling back to the debug key —
+        // updates only install when every release is signed with the same key.
+        if (keystoreProperties.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
@@ -34,8 +62,7 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug") // use debug key for now
-            // V1+V2+V3 inherited from signingConfigs block above
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {
@@ -45,8 +72,13 @@ android {
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
+    }
+
+    testOptions {
+      // android.util.Log etc. are stubs in local unit tests; return defaults instead of throwing.
+      unitTests.isReturnDefaultValues = true
     }
 
     packaging {
@@ -87,6 +119,8 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  // Real org.json for local tests (android.jar only ships stubs)
+  testImplementation("org.json:json:20240303")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)

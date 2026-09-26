@@ -1,3 +1,13 @@
+# Changelog - v1.12 In-App Updates (2026-09-26)
+
+* **New `update/` package:** `UpdateManager` (check / download / install), `ReleaseParser` (Gitea JSON, version compare), `InstallResultReceiver` (PackageInstaller results). UI is in `ui/UpdateUI.kt` (dialog + Settings card).
+* **Manifest:** `INTERNET`, `ACCESS_NETWORK_STATE`, `REQUEST_INSTALL_PACKAGES`, `CHANGE_NETWORK_STATE` (Android 14 FGS). `BootReceiver` also handles `MY_PACKAGE_REPLACED`.
+* **Build:** new release signing key (outside the repo, via `keystore.properties`), `buildConfig` enabled, version 1.12 (12). Added the missing `gradle.properties` and `gradlew.bat`, and fixed the local unit tests.
+* **Fixes:** permanent USB reconnect loop, Android 14 PendingIntent crash, snooze display during fast leak, pairing-step race, MediaPlayer leak, synchronised alarm evaluation.
+* **Repo:** untracked the partial `tpms-app/jdk` and `.kotlin` session files, removed the unused `tung_sahur.png` (a JPEG that broke release builds). Added `scripts/publish-release.sh` and `release-notes/`.
+
+---
+
 # Changelog - UI Enhancements (2026-06-22)
 
 This file documents the changes made to the laptop codebase so that you can align the PC folder when you transfer it back.
